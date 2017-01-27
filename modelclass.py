@@ -34,7 +34,8 @@ class chemicalmodel:
         self.data = np.loadtxt(path, skiprows=3).T
 
         # The data is a 1+1D grid. Each vertical column will have
-        # its own gridding.
+        # its own gridding. Thus we can split each physical property
+        # into its own dictionary for easy access.
 
         with open(self.path) as fp:
             for i, line in enumerate(fp):
@@ -44,7 +45,19 @@ class chemicalmodel:
                     self.zpnts = int(line)
                 if i > 2:
                     break
+
         self.rvals = np.unique(self.data[0])
+
+        self.zvals = {r : self.data[1][self.data[0] == r] for r in self.rvals}
+        self.density = {r : self.data[2][self.data[0] == r] for r in self.rvals}
+        self.temperature = {r : self.data[3][self.data[0] == r] for r in self.rvals}
+        self.abundance = {r : self.data[4][self.data[0] == r] for r in self.rvals}
+
+        self.props = {}
+        self.props[2] = self.density
+        self.props[3] = self.temperature
+        self.props[4] = self.abundance
+
         if len(self.rvals) != self.rpnts:
             raise ValueError('Error in parsing grid.')
 
@@ -73,8 +86,65 @@ class chemicalmodel:
         sigma = np.array([self.integrate_column(r, -1) for r in self.rvals])
         return 2. * sigma
 
+    def abundance_weighted(self, param):
+        '''Abundance weighted radial profiles.'''
+        if type(param) is str:
+            param = chemicalmodel.indices[param]
+        assert type(param) is int
+        p = [self.wpercentiles(self.props[param],
+                               self.cell_weights(r))
+             for r in self.rvals]
+        return np.squeeze(p)
+
+    def cell_weights(self, r):
+        '''Weights for grid at r [au].'''
+        return self.cell_size(self.zvals[r]) * self.abundance[r]
+
     def integrate_column(self, r, c, unit='cm'):
         '''Vertically integrate column.'''
         y = self.data[c][self.data[0] == r]
         x = self.data[1][self.data[0] == r]
         return np.trapz(y, x * chemicalmodel.units[unit])
+
+    @staticmethod
+    def cell_size(axis):
+        '''Returns the cell size for an unstructured grid.'''
+        mx = axis.size
+        dx = np.diff(axis)
+        sizes = [(dx[max(0, i-1)]+dx[min(i, mx-2)])*0.5 for i in range(mx)]
+        return np.array(sizes)
+
+    @staticmethod
+    def wpercentiles(data, weights, percentiles=[0.16, 0.5, 0.84]):
+        '''Weighted percentiles.'''
+
+        # Make sure all weights are positive, then sort the data.
+
+        assert all(weights >= 0)
+        idx = np.argsort(data)
+        sorted_data = np.take(data, idx)
+        sorted_weights = np.take(weights, idx)
+
+        # Calculate the cumulative sum. Note this is roughly
+        # five times quicker than np.cumsum().
+
+        cum_weights = np.add.accumulate(sorted_weights)
+        scaled_weights = (cum_weights - 0.5 * sorted_weights) / cum_weights[-1]
+        spots = np.searchsorted(scaled_weights, percentiles)
+
+        # Interpolate the values. If either bounds are chosen, just
+        # return them. Not likely to happen.
+
+        wp = []
+        for s, p in zip(spots, percentiles):
+            if s == 0:
+                wp.append(sorted_data[s])
+            elif s == data.size:
+                wp.append(sorted_data[s-1])
+            else:
+                f1 = (scaled_weights[s] - p)
+                f1 /= (scaled_weights[s] - scaled_weights[s-1])
+                f2 = (p - scaled_weights[s-1])
+                f2 /= (scaled_weights[s] - scaled_weights[s-1])
+                wp.append(sorted_data[s-1] * f1 + sorted_data[s] * f2)
+        return wp
