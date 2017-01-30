@@ -40,18 +40,21 @@ class chemicalmodel:
         with open(self.path) as fp:
             for i, line in enumerate(fp):
                 if i == 1:
-                    self.rpnts = int(line)
+                    self.rpnts = int(line.replace('\n', '').replace('#', ''))
                 if i == 2:
-                    self.zpnts = int(line)
+                    self.zpnts = int(line.replace('\n', '').replace('#', ''))
                 if i > 2:
                     break
 
         self.rvals = np.unique(self.data[0])
-
-        self.zvals = {r : self.data[1][self.data[0] == r] for r in self.rvals}
-        self.density = {r : self.data[2][self.data[0] == r] for r in self.rvals}
-        self.temperature = {r : self.data[3][self.data[0] == r] for r in self.rvals}
-        self.abundance = {r : self.data[4][self.data[0] == r] for r in self.rvals}
+        self.zvals = {r: self.data[1][self.data[0] == r]
+                      for r in self.rvals}
+        self.density = {r: self.data[2][self.data[0] == r]
+                        for r in self.rvals}
+        self.temperature = {r: self.data[3][self.data[0] == r]
+                            for r in self.rvals}
+        self.abundance = {r: self.data[4][self.data[0] == r]
+                          for r in self.rvals}
 
         self.props = {}
         self.props[2] = self.density
@@ -86,15 +89,31 @@ class chemicalmodel:
         sigma = np.array([self.integrate_column(r, -1) for r in self.rvals])
         return 2. * sigma
 
-    def abundance_weighted(self, param):
+    def abundance_weighted(self, param, uncertainties=True):
         '''Abundance weighted radial profiles.'''
+
+        # Convert the parameter into the correct dictionary key.
+
         if type(param) is str:
             param = chemicalmodel.indices[param]
         assert type(param) is int
-        p = [self.wpercentiles(self.props[param],
-                               self.cell_weights(r))
+
+        p = [self.wpercentiles(self.props[param][r], self.cell_weights(r))
              for r in self.rvals]
-        return np.squeeze(p)
+        p = np.squeeze(p).T
+
+        # Convert the percentiles into upper and lower bounds.
+        # Otherwise return the percentiles as-is. Uncertainties is useful for
+        # plotting errorbars, while percentiles are better for fill_between.
+
+        if uncertainties:
+            pp = p.copy()
+            pp[0] = p[1]
+            pp[1] = p[1] - p[0]
+            pp[2] = p[2] - p[1]
+            return pp
+
+        return p
 
     def cell_weights(self, r):
         '''Weights for grid at r [au].'''
